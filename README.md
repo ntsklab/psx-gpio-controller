@@ -1,3 +1,12 @@
+# PSコントローラシミュレータ
+PicoのGPIOを使ったプレステコントローラ実装（AI生成）
+
+古めのPSゲームでコントローラが効かなくなることが合ったため、タイミングを調整。（Sleep入れただけですが・・・）
+
+動作保証はできません！
+
+以下はオリジナルプロジェクトのREADMEです。ビルド手順等が含まれます。
+
 # PICO-GAMEPAD-CONVERTER
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/O4O8TQSC8)
