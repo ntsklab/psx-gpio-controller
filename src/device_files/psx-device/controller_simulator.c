@@ -1,13 +1,12 @@
 #include <string.h>
-#include <stdio.h>
-#include "pico/stdio.h"
-
+#include "hardware/pio.h"
+#include "hardware/irq.h"
 #include "psxSPI.pio.h"
 #include "controller_simulator.h"
 #include "pico/multicore.h"
 
 
-static PIO psx_device_pio;         // pio0 or pio1
+static PIO psx_device_pio;         // 使用するPIOインスタンス（pio0 または pio1）
 uint smCmdReader;
 uint smDatWriter;
 
@@ -28,12 +27,30 @@ void cancel_ack() {
 	pio_sm_exec(psx_device_pio, smCmdReader, pio_encode_jmp(offsetCmdReader));		// restart smCmdReader
 }
 
+// 古いPS1ソフトの互換性対策用の待ち時間（必要に応じて有効化）
+#ifndef PSX_WA_ENABLE
+#define PSX_WA_ENABLE 1
+#endif
+
+#if PSX_WA_ENABLE
+#define PSX_WA_WAIT 10
+#else
+#define PSX_WA_WAIT 0
+#endif
+
 void SEND(uint8_t byte) {
 	write_byte_blocking(psx_device_pio, smDatWriter, byte);
+#if PSX_WA_ENABLE
+	sleep_us(PSX_WA_WAIT);
+#endif
 }
 
 uint8_t RECV_CMD() {
-	return read_byte_blocking(psx_device_pio, smCmdReader);
+	uint8_t b = read_byte_blocking(psx_device_pio, smCmdReader);
+#if PSX_WA_ENABLE
+	sleep_us(PSX_WA_WAIT);
+#endif
+	return b;
 }
 
 void initController() {
@@ -45,6 +62,9 @@ void initController() {
 	pollConfig[1] = 0xFF;
 	pollConfig[2] = 0x03;
 	pollConfig[3] = 0x00;
+#if PSX_WA_ENABLE
+	sleep_us(PSX_WA_WAIT);
+#endif
 }
 
 void processRumble(uint8_t index, uint8_t value) {
@@ -298,6 +318,7 @@ void processPollConfig() {
 void process_joy_req() {
 	SEND(config ? MODE_CONFIG : mode);
 	uint8_t cmd = RECV_CMD();
+	sleep_us(PSX_WA_WAIT);
 	switch(cmd) {
 		case(CMD_POLL): {
 			processPoll();
@@ -344,7 +365,7 @@ void process_joy_req() {
 			break;
 		}
 		default: {
-			//printf("Unknown CMD: 0x%.2x\n", cmd);
+			sleep_us(PSX_WA_WAIT);
 			break;
 		}
 	}
@@ -352,9 +373,13 @@ void process_joy_req() {
 
 
 void psx_device_main() {
+	uint8_t tcmd=0;
 	while(true) {
-		if(RECV_CMD() == 0x01) {
+		tcmd = RECV_CMD();
+		if(tcmd == 0x01) {
 			process_joy_req();
+		} else {
+			sleep_us(PSX_WA_WAIT);
 		}
 	}
 }
@@ -367,19 +392,21 @@ void __time_critical_func(restart_pio_sm)() {
     pio_sm_clear_fifos(psx_device_pio, smCmdReader);
     pio_sm_drain_tx_fifo(psx_device_pio, smDatWriter); // drain instead of clear, so that we empty the OSR
 
-    // resetting and launching core1 here allows to perform the reset of the transaction (e.g. when PSX polls for new MC without completing the read)
+	// ここでcore1をリセット／再起動することで、トランザクションを確実にリセットします
+	// （例：PSXが新しいメモリーカードをポーリングしたが読取りを完了しなかった場合など）。
     multicore_reset_core1();
     multicore_launch_core1(core1_function);
     pio_enable_sm_mask_in_sync(psx_device_pio, 1 << smCmdReader | 1 << smDatWriter);
 }
 
 void __time_critical_func(sel_isr_callback()) {
-    // TODO refractor comment, also is __time_critical_func needed for speed? we should test if everything works without it!
-    /* begin inlined call of:  gpio_acknowledge_irq(PIN_SEL, GPIO_IRQ_EDGE_RISE); kept in RAM for performance reasons */
-    check_gpio_param(PIN_SEL);
-    io_bank0_hw->intr[PIN_SEL / 8] = GPIO_IRQ_EDGE_RISE << (4 * (PIN_SEL % 8));
-    /* end of inlined call */
-    restart_pio_sm();
+	// SELピンの立ち上がり割込みハンドラ
+	// 割込み内では割込みフラグを確認してACKをクリアし、PIOの状態マシンを再起動して
+	// 現在のトランザクションをリセットします。処理は最小限に抑え、RAM上で実行されます
+	// （高速処理のため）。
+	check_gpio_param(PIN_SEL);
+	io_bank0_hw->intr[PIN_SEL / 8] = GPIO_IRQ_EDGE_RISE << (4 * (PIN_SEL % 8));
+	restart_pio_sm();
 }
 
 void init_pio() {
@@ -427,5 +454,5 @@ void psx_device_init(uint pio, PSXInputState *data, void (*reset_pio) ()) {
     irq_set_enabled(IO_IRQ_BANK0, true);
 
 
-	printf("Init psx simulator\n");
+	sleep_us(PSX_WA_WAIT);
 }

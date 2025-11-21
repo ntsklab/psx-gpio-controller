@@ -2,11 +2,11 @@
 ;	Interfaces with the modified SPI protocol used by
 ;	PSX to communicate with controller/memory cards
 
-.define PUBLIC PIN_DAT 19
-.define PUBLIC PIN_CMD 20
-.define PUBLIC PIN_SEL 21
-.define PUBLIC PIN_CLK 22
-.define PUBLIC PIN_ACK 26
+.define PUBLIC PIN_DAT 3
+.define PUBLIC PIN_CMD 4
+.define PUBLIC PIN_SEL 10
+.define PUBLIC PIN_CLK 6
+.define PUBLIC PIN_ACK 7
 
 .program cmd_reader
 ; Input pins mapping:
@@ -67,7 +67,7 @@ jmp x-- sendbit			side 0			; count and send 8 bits
 .wrap
 
 % c-sdk {
-#define SLOW_CLKDIV 50	// 125MHz divided down to 2.5 MHz - we need this so we don't count clocks not meant for us on systems like the PS2
+#define SLOW_CLKDIV 50	// PS1 clock divider - adjusted for stable communication
 
 static inline void cmd_reader_program_init(PIO pio, uint sm, uint offset) {
 	pio_sm_config c = cmd_reader_program_get_default_config(offset);

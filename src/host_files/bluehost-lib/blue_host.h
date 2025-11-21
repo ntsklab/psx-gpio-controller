@@ -1,1 +1,0 @@
-void btstack_host(void (*fn)(void *));
