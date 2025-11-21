@@ -4,6 +4,8 @@
 #include "psxSPI.pio.h"
 #include "controller_simulator.h"
 #include "pico/multicore.h"
+#include "../psx_shared.h"
+#include "../psx_led_status.h"
 
 
 static PIO psx_device_pio;         // 使用するPIOインスタンス（pio0 または pio1）
@@ -14,6 +16,9 @@ uint offsetCmdReader;
 uint offsetDatWriter;
 
 volatile PSXInputState *inputState;
+// cached snapshot used by core1 to process transactions without reading
+// the writer's buffer mid-update.
+static PSXInputState cachedInputState;
 
 static uint8_t mode = MODE_DIGITAL;
 static bool config = false;
@@ -109,6 +114,9 @@ void processPollConfigStatus() {
 //0x42
 void processPoll() {
 	config = false;
+	// LED を POLL パターンに設定（2回点滅）
+	psx_led_set_status(PSX_LED_POLL);
+	
 	switch(mode) {
 		case MODE_DIGITAL: {
 			uint8_t buf[3] = { 0x5A, inputState->buttons1, inputState->buttons2 };
@@ -140,6 +148,9 @@ void processPoll() {
 }
 //0x43
 void processConfig() {
+	// LED を CONFIG パターンに設定（3回点滅）
+	psx_led_set_status(PSX_LED_CONFIG);
+	
 	switch(config ? MODE_CONFIG : mode) {
 		case MODE_CONFIG: {
 			for(uint8_t i = 0; i < 7; i++) {
@@ -375,6 +386,11 @@ void process_joy_req() {
 void psx_device_main() {
 	uint8_t tcmd=0;
 	while(true) {
+		// Copy a stable snapshot from the shared buffer into a local cache.
+		// This prevents reading partially-updated state while processing a
+		// PSX transaction.
+		psx_shared_read(&g_psx_shared, &cachedInputState);
+		inputState = &cachedInputState;
 		tcmd = RECV_CMD();
 		if(tcmd == 0x01) {
 			process_joy_req();

@@ -5,6 +5,8 @@
 
 #include "controller_simulator.h"
 #include "psxSPI.pio.h"
+#include "psx_shared.h"
+#include "psx_led_status.h"
 
 // シンプルなGPIO→PSXコントローラエミュレータ
 // - 指定したGPIOピンを読み取り、PSXのボタンビットにマッピングします
@@ -15,7 +17,12 @@
 #define NUM_BUTTON_PINS 14
 #include "psx_definitions.h"
 
+// グローバル LED コンテキストの定義（ヘッダで extern 宣言されている）
+psx_led_context_t g_led_ctx;
+
 static PSXInputState state;
+// shared buffer instance used for lock-free synchronization between cores
+PSXSharedBuffer g_psx_shared;
 static uint8_t btn_pins[NUM_BUTTON_PINS];
 static int btn_count = 0;
 
@@ -73,10 +80,17 @@ static void poll_buttons(void) {
     state.ly = 0x80;
     state.rx = 0x80;
     state.ry = 0x80;
+
+    // publish a stable snapshot to the shared buffer for core1 to read
+    psx_shared_write(&g_psx_shared, &state);
 }
 
 int main(void) {
     stdio_init_all();
+    
+    // LED を初期化
+    psx_led_init();
+    psx_led_set_status(PSX_LED_IDLE);
     
     // 固定ボタンGPIO割当（ユーザー指定）
     // Mapping indexes: 0:CIRCLE,1:CROSS,2:TRIANGLE,3:SQUARE,
@@ -114,9 +128,16 @@ int main(void) {
     state.lx = state.ly = state.rx = state.ry = 0x80;
     state.l2 = state.r2 = 0x00;
 
+    // Initialize shared buffer and publish initial state
+    psx_shared_init(&g_psx_shared);
+    psx_shared_write(&g_psx_shared, &state);
+
     // PSXデバイスを初期化（pio 0 を使用）。
     // 第3引数に `psx_device_main` を渡すことで、必要時にコントローラシミュレータが core1 を再起動できます。
     psx_device_init(0, &state, psx_device_main);
+    
+    // LED ステータスを READY に更新（PSX init 完了）
+    psx_led_set_status(PSX_LED_READY);
 
     // コントローラシミュレータを core1 上で起動。core1 はブロックして PIO トランザクションに応答します。
     multicore_launch_core1(psx_device_main);
@@ -126,6 +147,9 @@ int main(void) {
         poll_buttons();
     // 簡易デバウンス: 1 msごとにサンプリング
         sleep_ms(1);
+        
+        // LED 更新（毎ループ call - 内部で時刻チェック）
+        psx_led_update();
     }
 
     return 0;
