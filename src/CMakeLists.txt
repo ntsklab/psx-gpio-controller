@@ -20,10 +20,7 @@ target_sources(${target_name} PRIVATE
  utils.c
  )
 
-add_subdirectory(host_files/psx-lib)
-add_subdirectory(host_files/joybus_host)
 add_subdirectory(device_files/psx-device)
-add_subdirectory(device_files/gc-device)
 add_subdirectory(flash-lib)
 
 pico_enable_stdio_usb(${target_name} 1)
@@ -37,7 +34,7 @@ target_compile_options(${target_name} PRIVATE -Wall -Wextra)
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR} device_files/psx-device ${CMAKE_BINARY_DIR}/device_files/psx-device)
 
 # Link libraries - stdio over USB via pico_stdio_usb (built-in to pico_stdlib)
-target_link_libraries(${target_name} PRIVATE pico_stdlib pico_multicore pico_status_led psx-lib flash-lib psx-device gc-device joybus_host)
+target_link_libraries(${target_name} PRIVATE pico_stdlib pico_multicore pico_status_led flash-lib psx-device)
 
 pico_add_extra_outputs(${target_name})
 
