@@ -15,6 +15,11 @@ typedef enum {
     PSX_LED_ERROR = 4,         // 高速点滅 - エラー状態
 } psx_led_status_t;
 
+// モード別ステータス（POLL 時にモードごとに使い分ける）
+#define PSX_LED_MODE_DIGITAL      10  // デジタル: 4回点滅
+#define PSX_LED_MODE_ANALOG       11  // アナログ: 5回点滅
+#define PSX_LED_MODE_PRESSURE     12  // アナログ（プレッシャ）: 6回点滅
+
 // LED 状態管理構造体
 typedef struct {
     uint32_t last_update_ms;    // 最後に状態更新した時刻 (ms)
@@ -61,11 +66,12 @@ static inline void psx_led_set_status(psx_led_status_t status) {
 //   POLL: 2回点滅（100ms on/off x2, 300ms pause）
 //   CONFIG: 3回点滅（100ms on/off x3, 300ms pause）
 //   ERROR: 高速点滅（50ms on/off）
+//   DIGITAL: 4回点滅（100ms on/off x4, 300ms pause）
+//   ANALOG: 5回点滅（100ms on/off x5, 300ms pause）
+//   PRESSURE: 6回点滅（100ms on/off x6, 300ms pause）
 static inline void psx_led_update(void) {
     uint32_t now_ms = time_us_32() / 1000;
     uint32_t elapsed = now_ms - g_led_ctx.last_update_ms;
-    
-    bool should_toggle = false;
     
     switch (g_led_ctx.current_status) {
         case PSX_LED_IDLE:
@@ -77,21 +83,23 @@ static inline void psx_led_update(void) {
             break;
             
         case PSX_LED_READY:
-            // 1回点滅：200ms on, 200ms off
+            // READY: 1回点滅（200ms on, 200ms off）
             if (elapsed >= 200) {
                 g_led_ctx.led_on = !g_led_ctx.led_on;
                 gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
                 g_led_ctx.last_update_ms = now_ms;
                 if (!g_led_ctx.led_on && ++g_led_ctx.flash_count >= 1) {
-                    g_led_ctx.flash_count = 0;  // repeat pattern
+                    // reset count so pattern repeats
+                    g_led_ctx.flash_count = 0;
                 }
             }
             break;
+            
+        
             
         case PSX_LED_POLL:
-            // 2回点滅：100ms on/off x2, 300ms pause
+            // 互換用: デフォルト 2 回点滅（互換性維持）。
             if (g_led_ctx.flash_count < 2) {
-                // flashing phase
                 if (elapsed >= 100) {
                     g_led_ctx.led_on = !g_led_ctx.led_on;
                     gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
@@ -101,7 +109,6 @@ static inline void psx_led_update(void) {
                     }
                 }
             } else {
-                // pause phase
                 if (elapsed >= 300) {
                     g_led_ctx.flash_count = 0;
                     g_led_ctx.led_on = false;
@@ -110,11 +117,10 @@ static inline void psx_led_update(void) {
                 }
             }
             break;
-            
+
         case PSX_LED_CONFIG:
-            // 3回点滅：100ms on/off x3, 300ms pause
+            // CONFIG: 3回点滅（100ms on/off x3, 300ms pause）
             if (g_led_ctx.flash_count < 3) {
-                // flashing phase
                 if (elapsed >= 100) {
                     g_led_ctx.led_on = !g_led_ctx.led_on;
                     gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
@@ -124,7 +130,6 @@ static inline void psx_led_update(void) {
                     }
                 }
             } else {
-                // pause phase
                 if (elapsed >= 300) {
                     g_led_ctx.flash_count = 0;
                     g_led_ctx.led_on = false;
@@ -133,6 +138,71 @@ static inline void psx_led_update(void) {
                 }
             }
             break;
+
+        // モード別の点滅パターン（POLL でモードに応じてこれらを使用）
+        case PSX_LED_MODE_DIGITAL: {
+            // デジタル: 4回点滅（100ms on/off x4, 300ms pause）
+            if (g_led_ctx.flash_count < 4) {
+                if (elapsed >= 100) {
+                    g_led_ctx.led_on = !g_led_ctx.led_on;
+                    gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                    if (!g_led_ctx.led_on) {
+                        g_led_ctx.flash_count++;
+                    }
+                }
+            } else {
+                if (elapsed >= 300) {
+                    g_led_ctx.flash_count = 0;
+                    g_led_ctx.led_on = false;
+                    gpio_put(PICO_LED_PIN, 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                }
+            }
+            break;
+        }
+        case PSX_LED_MODE_ANALOG: {
+            // アナログ: 5回点滅（100ms on/off x5, 300ms pause）
+            if (g_led_ctx.flash_count < 5) {
+                if (elapsed >= 100) {
+                    g_led_ctx.led_on = !g_led_ctx.led_on;
+                    gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                    if (!g_led_ctx.led_on) {
+                        g_led_ctx.flash_count++;
+                    }
+                }
+            } else {
+                if (elapsed >= 300) {
+                    g_led_ctx.flash_count = 0;
+                    g_led_ctx.led_on = false;
+                    gpio_put(PICO_LED_PIN, 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                }
+            }
+            break;
+        }
+        case PSX_LED_MODE_PRESSURE: {
+            // アナログ（プレッシャ）: 6回点滅（100ms on/off x6, 300ms pause）
+            if (g_led_ctx.flash_count < 6) {
+                if (elapsed >= 100) {
+                    g_led_ctx.led_on = !g_led_ctx.led_on;
+                    gpio_put(PICO_LED_PIN, g_led_ctx.led_on ? 1 : 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                    if (!g_led_ctx.led_on) {
+                        g_led_ctx.flash_count++;
+                    }
+                }
+            } else {
+                if (elapsed >= 300) {
+                    g_led_ctx.flash_count = 0;
+                    g_led_ctx.led_on = false;
+                    gpio_put(PICO_LED_PIN, 0);
+                    g_led_ctx.last_update_ms = now_ms;
+                }
+            }
+            break;
+        }
             
         case PSX_LED_ERROR:
             // 高速点滅：50ms on/off

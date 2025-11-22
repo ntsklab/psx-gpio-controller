@@ -45,9 +45,6 @@ void cancel_ack() {
 
 void SEND(uint8_t byte) {
 	write_byte_blocking(psx_device_pio, smDatWriter, byte);
-#if PSX_WA_ENABLE
-	sleep_us(PSX_WA_WAIT);
-#endif
 }
 
 uint8_t RECV_CMD() {
@@ -68,7 +65,7 @@ void initController() {
 	pollConfig[2] = 0x03;
 	pollConfig[3] = 0x00;
 #if PSX_WA_ENABLE
-	sleep_us(PSX_WA_WAIT);
+	//sleep_us(PSX_WA_WAIT);
 #endif
 }
 
@@ -98,6 +95,9 @@ void processPresConfig() {
 	{
 		SEND(buf[i]);
 		RECV_CMD();
+#if PSX_WA_ENABLE
+		//sleep_us(PSX_WA_WAIT);
+#endif
 	}
 }
 //0x41
@@ -109,13 +109,24 @@ void processPollConfigStatus() {
 	for(uint8_t i = 0; i < 7; i++) {
 		SEND(buf[i]);
 		RECV_CMD();
+#if PSX_WA_ENABLE
+		//sleep_us(PSX_WA_WAIT);
+#endif
 	}
 }
 //0x42
 void processPoll() {
 	config = false;
-	// LED を POLL パターンに設定（2回点滅）
-	psx_led_set_status(PSX_LED_POLL);
+	// LED をモード別パターンに設定（デジタル/アナログ/アナログプレッシャ）
+	if (mode == MODE_DIGITAL) {
+		psx_led_set_status(PSX_LED_MODE_DIGITAL);
+	} else if (mode == MODE_ANALOG) {
+		psx_led_set_status(PSX_LED_MODE_ANALOG);
+	} else if (mode == MODE_ANALOG_PRESSURE) {
+		psx_led_set_status(PSX_LED_MODE_PRESSURE);
+	} else {
+		psx_led_set_status(PSX_LED_POLL);
+	}
 	
 	switch(mode) {
 		case MODE_DIGITAL: {
@@ -155,8 +166,12 @@ void processConfig() {
 		case MODE_CONFIG: {
 			for(uint8_t i = 0; i < 7; i++) {
 				SEND((i == 0) ? 0x5A : 0x00);
-				if(i != 1)
+				if(i != 1){
 					RECV_CMD();
+#if PSX_WA_ENABLE
+					//sleep_us(PSX_WA_WAIT);
+#endif
+				}
 				else
 					config = RECV_CMD();
 			}
@@ -166,8 +181,12 @@ void processConfig() {
 			uint8_t buf[3] = { 0x5A, inputState->buttons1, inputState->buttons2 };
 			for(uint8_t i = 0; i < 3; i++) {
 				SEND(buf[i]);
-				if(i != 1)
+				if(i != 1){
 					RECV_CMD();
+#if PSX_WA_ENABLE
+					//sleep_us(PSX_WA_WAIT);
+#endif
+				}
 				else
 					config = RECV_CMD();
 			}
@@ -177,8 +196,12 @@ void processConfig() {
 			uint8_t buf[7] = { 0x5A, inputState->buttons1, inputState->buttons2, inputState->rx, inputState->ry, inputState->lx, inputState->ly };
 			for(uint8_t i = 0; i < 7; i++) {
 				SEND(buf[i]);
-				if(i != 1)
+				if(i != 1){
 					RECV_CMD();
+#if PSX_WA_ENABLE
+					//sleep_us(PSX_WA_WAIT);
+#endif
+				}
 				else
 					config = RECV_CMD();
 			}
@@ -190,8 +213,12 @@ void processConfig() {
 							   (inputState->buttons2 & X) ? 0xFF : 0x00, (inputState->buttons2 & SQU) ? 0xFF : 0x00, (inputState->buttons2 & L1) ? 0xFF : 0x00, (inputState->buttons2 & R1) ? 0xFF : 0x00, inputState->l2, inputState->r2 };
 			for(uint8_t i = 0; i < 19; i++) {
 				SEND(buf[i]);
-				if(i != 1)
+				if(i != 1){
 					RECV_CMD();
+#if PSX_WA_ENABLE
+					//sleep_us(PSX_WA_WAIT);
+#endif
+				}
 				else
 					config = RECV_CMD();
 			}
@@ -329,7 +356,7 @@ void processPollConfig() {
 void process_joy_req() {
 	SEND(config ? MODE_CONFIG : mode);
 	uint8_t cmd = RECV_CMD();
-	sleep_us(PSX_WA_WAIT);
+	//sleep_us(PSX_WA_WAIT);
 	switch(cmd) {
 		case(CMD_POLL): {
 			processPoll();
@@ -376,7 +403,7 @@ void process_joy_req() {
 			break;
 		}
 		default: {
-			sleep_us(PSX_WA_WAIT);
+			//sleep_us(PSX_WA_WAIT);
 			break;
 		}
 	}
@@ -395,7 +422,7 @@ void psx_device_main() {
 		if(tcmd == 0x01) {
 			process_joy_req();
 		} else {
-			sleep_us(PSX_WA_WAIT);
+			//sleep_us(PSX_WA_WAIT);
 		}
 	}
 }
@@ -407,6 +434,10 @@ void __time_critical_func(restart_pio_sm)() {
     pio_sm_exec(psx_device_pio, smDatWriter, pio_encode_jmp(offsetDatWriter));	// restart smDatWriter PC
     pio_sm_clear_fifos(psx_device_pio, smCmdReader);
     pio_sm_drain_tx_fifo(psx_device_pio, smDatWriter); // drain instead of clear, so that we empty the OSR
+    
+    // DAT/ACK ピンを明示的に Hi-Z（入力モード）にして、共有バスへの干渉を防ぐ
+    gpio_set_dir(PIN_DAT, false);  // input = Hi-Z
+    gpio_set_dir(PIN_ACK, false);  // input = Hi-Z
 
 	// ここでcore1をリセット／再起動することで、トランザクションを確実にリセットします
 	// （例：PSXが新しいメモリーカードをポーリングしたが読取りを完了しなかった場合など）。
@@ -422,7 +453,14 @@ void __time_critical_func(sel_isr_callback()) {
 	// （高速処理のため）。
 	check_gpio_param(PIN_SEL);
 	io_bank0_hw->intr[PIN_SEL / 8] = GPIO_IRQ_EDGE_RISE << (4 * (PIN_SEL % 8));
-	restart_pio_sm();
+	
+	// メモリーカードアクセス中の誤動作を防ぐため、SELECT が実際に HIGH かを確認
+	// （ノイズや他のピンの影響で誤割込みが発生する可能性がある）
+	if (gpio_get(PIN_SEL) != 0) {
+		// SELECT が HIGH: 正常な割込み
+		restart_pio_sm();
+	}
+	// SELECT が LOW の場合は何もしない（誤割込み）
 }
 
 void init_pio() {
@@ -470,5 +508,5 @@ void psx_device_init(uint pio, PSXInputState *data, void (*reset_pio) ()) {
     irq_set_enabled(IO_IRQ_BANK0, true);
 
 
-	sleep_us(PSX_WA_WAIT);
+	//sleep_us(PSX_WA_WAIT);
 }
